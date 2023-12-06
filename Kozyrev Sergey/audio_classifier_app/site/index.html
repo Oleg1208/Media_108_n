@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудио Классификатор</title>
+
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            border: 1px solid black;
+            padding: 8px;
+            text-align: left;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        .loader {
+            height: 10px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+            background-color: #ddd;
+            margin-top: 10px;
+        }
+
+        .loader:before {
+            display: block;
+            position: absolute;
+            content: "";
+            left: -200px;
+            width: 200px;
+            height: 10px;
+            background-color: #3498db; /* Синий цвет */
+            animation: loading 2s linear infinite;
+        }
+
+        @keyframes loading {
+            from {left: -200px; width: 30%;}
+            50% {width: 30%;}
+            70% {width: 70%;}
+            80% {left: 50%;}
+            95% {left: 120%;}
+            to {left: 100%;}
+        }
+
+        #loadingMessage {
+            display: none;
+            text-align: left;
+            margin-top: 20px; /* Отступ от текста */
+        }
+
+        #loadingText {
+            display: none; 
+            text-align: left; 
+            font-weight: bold; /* Добавляем жирное начертание */
+            color: red
+        }
+    </style>
+</head>
+<body>
+    <h1>Аудио Классификатор</h1>
+    <p>Загружать можно как единичный мр3 файл, так и zip архив с файлами (максимальный размер zip архива 50 MB)</p>
+    <!-- <input type="file" id="fileInput" accept="audio/*">
+    <button onclick="sendFile()">Отправить</button> -->
+    <input type="file" id="fileInput" accept="audio/*,.zip">
+    <button onclick="sendFile()">Отправить</button>
+    <p id="loadingText">Дождитесь обработки файла... Не обновляйте страницу!</p>
+    <div id="loadingMessage" class="loader"></div>
+    <p>Для сортировки по колонке, нажмите на заголовок колонки</p>
+    <table id="resultsTable">
+        <thead>
+            <tr>
+                <th onclick="sortTable(0)">Имя файла <span id="icon0"></span></th>
+                <th onclick="sortTable(1)">Предсказание <span id="icon1"></span></th>
+                <th onclick="sortTable(2)">Время обработки (мс) <span id="icon2"></span></th>
+                <th onclick="sortTable(3)">Длина обрабатываемой части аудиозаписи <span id="icon3"></span></th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Здесь будут добавляться строки -->
+        </tbody>
+    </table>
+    
+
+    <script>
+        async function sendFile() {
+            const fileInput = document.getElementById('fileInput');
+            const loadingMessage = document.getElementById('loadingMessage');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                alert('Пожалуйста, выберите файл.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+                // Показать анимацию загрузки
+            loadingMessage.style.display = 'block';
+            document.getElementById('loadingText').style.display = 'block';
+
+            // Определяем, является ли файл архивом
+            const endpoint = file.name.endsWith('.zip') ? '/predict_zip/' : '/predict/';
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                body: formData
+            });
+
+            // Скрыть анимацию загрузки
+            loadingMessage.style.display = 'none';
+            document.getElementById('loadingText').style.display = 'none';
+
+            const results = await response.json();
+
+            if (Array.isArray(results)) {
+                results.forEach(result => {
+                    addRowToTable(result.fileName, result.prediction, result.processingTime, result.audioDuration);
+                });
+            } else {
+                addRowToTable(results.fileName, results.prediction, results.processingTime, results.audioDuration);
+            }
+
+            fileInput.value = null;
+        }
+
+        function addRowToTable(fileName, prediction, processingTime, audioDuration) {
+            const table = document.getElementById('resultsTable').getElementsByTagName('tbody')[0];
+            const newRow = table.insertRow(table.rows.length);
+            // Устанавливаем цвет текста в зависимости от предсказания
+            const color = prediction === 'целевой' ? 'green' : 'red';
+            newRow.innerHTML = `<td>${fileName}</td><td style="color: ${color};"">${prediction}</td><td>${processingTime.toFixed(2)} сек</td><td>${audioDuration.toFixed(2)} сек</td>`;
+        }
+
+        function sortTable(n) {
+            var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+            table = document.getElementById("resultsTable");
+            switching = true;
+            // Устанавливаем направление сортировки по умолчанию как возрастающее:
+            dir = "asc";
+            // Очищаем все иконки
+            resetIcons();
+
+            while (switching) {
+                switching = false;
+                rows = table.rows;
+                for (i = 1; i < (rows.length - 1); i++) {
+                    shouldSwitch = false;
+                    x = rows[i].getElementsByTagName("TD")[n];
+                    y = rows[i + 1].getElementsByTagName("TD")[n];
+                    if (dir == "asc") {
+                        if (x.innerHTML.toLowerCase() > y.innerHTML.toLowerCase()) {
+                            shouldSwitch = true;
+                            break;
+                        }
+                    } else if (dir == "desc") {
+                        if (x.innerHTML.toLowerCase() < y.innerHTML.toLowerCase()) {
+                            shouldSwitch = true;
+                            break;
+                        }
+                    }
+                }
+                if (shouldSwitch) {
+                    rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+                    switching = true;
+                    switchcount++;
+                } else {
+                    if (switchcount == 0 && dir == "asc") {
+                        dir = "desc";
+                        switching = true;
+                    }
+                }
+            }
+
+            // Обновляем иконку после сортировки
+            updateIcon(n, dir);
+        }
+
+        function resetIcons() {
+            for (let i = 0; i < 4; i++) {
+                document.getElementById("icon" + i).innerHTML = "";
+            }
+        }
+
+        function updateIcon(columnIndex, direction) {
+            var icon = direction === "asc" ? "▲" : "▼";
+            document.getElementById("icon" + columnIndex).innerHTML = icon;
+        }
+
+    </script>
+    
+</body>
+</html>
