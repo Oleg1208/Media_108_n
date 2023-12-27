@@ -1,14 +1,17 @@
-from flask import Flask, render_template, request
-import json
-import numpy
+import whisper
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import torch
 import os  # для работы с операционной системой
-import pandas as pd  # для работы с таблицами
-import numpy as np  # для работы с массивами
-import whisper
-# Импортируем предобученную модель
 from transformers import AutoModel, AutoTokenizer
 import torch.nn as nn
+
+
+# Запуск python app.py
+# Теперь вы можете открыть веб-браузер и перейти по адресу http://localhost:8000 для загрузки аудио файлов.
+# После загрузки будет показан результат определения класса на странице result.html.
 
 
 # Установка cohere openai tiktoken
@@ -39,7 +42,14 @@ class BERT_Arch(nn.Module):
         return x
 
 
-app = Flask(__name__)
+app = FastAPI()
+UPLOAD_FOLDER = 'C:/Users/kirar/PycharmProjects/Media108-Server/'
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+class PredictionResult(BaseModel):
+    predicted_class: str
+
 
 # Загрузка модели whisper medium
 whisper_model = whisper.load_model('medium')
@@ -53,6 +63,7 @@ whisper_model = whisper.load_model('medium')
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model = whisper.load_model("base", device="cpu")
 
+# Импортируем предобученную модель BERT
 bert = AutoModel.from_pretrained('DeepPavlov/rubert-base-cased-sentence')
 
 # Сам BERT обучать не будем, добавим к его выходу свои слои, которые и будем обучать
@@ -65,14 +76,14 @@ model = BERT_Arch(bert)
 model = model.to(device)
 
 # Загрузим лучшие веса для модели
-model.load_state_dict(torch.load('/content/drive/MyDrive/Media_108/Bert_веса/bert_weights.pt'))
+model.load_state_dict(torch.load('C:/Users/kirar/Downloads/bert_weights.pt'))
 tokenizer = AutoTokenizer.from_pretrained('DeepPavlov/rubert-base-cased-sentence')
 
 
 # Функция для определения класса по аудио
-def prediction(audio):
+def predict_audio_class(audio_path):
     # Whisper-транскрибация
-    text_whisper = whisper_model.transcribe(audio, language='ru')['text']
+    text_whisper = whisper_model.transcribe(audio_path, language='ru')['text']
     print(text_whisper)
 
     # Bert-предсказание
@@ -109,26 +120,44 @@ def prediction(audio):
     # Сохраняем вероятность в переменную confidence
     confidence = text_whisper_prob
 
-    # Тк здесь вероятностная принадлежность классу (у нас их 2), то есть вероятность (0, 0.5) - это НЕЦЕЛЕВОЙ,
-    # а [0.5, 1] - ЦЕЛЕВОЙ
+    threshold = 0.93
 
-    if confidence >= 0.5:
-        return f'Звонок, путь до которого {audio} — ЦЕЛЕВОЙ\nВероятность Целевого - {confidence},' \
+    if confidence >= threshold:
+        return f'Звонок, путь до которого {audio_path} — ЦЕЛЕВОЙ\nВероятность Целевого - {confidence},' \
                f' Нецелевого - {1 - confidence}'
     else:
-        return f'Звонок, путь до которого {audio} — НЕЦЕЛЕВОЙ\nВероятность Целевого - {confidence},' \
+        return f'Звонок, путь до которого {audio_path} — НЕЦЕЛЕВОЙ\nВероятность Целевого - {confidence},' \
                f' Нецелевого - {1 - confidence}'
 
 
-# Главная страница веб-сайта
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        audio = request.files['audio']
-        target_class = prediction(audio)
-        return render_template('result.html', target_class=target_class)
-    return render_template('index.html')
+# Маршрут для загрузки файла и получения предсказанного класса
+@app.post("/")
+async def index(file: UploadFile = File(...)):
+    # Проверка расширения файла
+    if file.filename.split(".")[-1].lower() not in ["mp3"]:
+        return {"error": "Invalid file format"}
+
+    # Генерация безопасного имени файла и сохранение файла
+    filename = file.filename
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    with open(file_path, "wb") as f:
+        contents = await file.read()
+        f.write(contents)
+
+    # Вызов функции предсказания класса аудиофайла
+    predicted_class = predict_audio_class(file_path)
+
+    # Возвращение результата предсказания
+    return {"predicted_class": predicted_class}
 
 
-if __name__ == '__main__':
-    app.run(debug=True)
+@app.get("/", response_class=HTMLResponse)
+async def get_index():
+    with open("static/index.html") as f:
+        html_content = f.read()
+    return HTMLResponse(content=html_content, status_code=200)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
